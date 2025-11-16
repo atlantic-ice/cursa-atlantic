@@ -47,6 +47,28 @@ export default function UploadPage() {
     setCorrectionSuccess(false);
   }, []);
 
+  const triggerDirectDownload = useCallback(({ path, suggestedName }) => {
+    if (!path) return;
+    try {
+      const base = API_BASE.endsWith('/') ? API_BASE : `${API_BASE}/`;
+      const url = new URL('api/document/download-corrected', base);
+      url.searchParams.set('path', path);
+      if (suggestedName) {
+        url.searchParams.set('filename', suggestedName);
+      }
+
+      const iframe = document.createElement('iframe');
+      iframe.style.display = 'none';
+      iframe.src = url.toString();
+      document.body.appendChild(iframe);
+      setTimeout(() => {
+        iframe.remove();
+      }, 120000);
+    } catch (fallbackError) {
+      console.error('Direct download fallback failed', fallbackError);
+    }
+  }, []);
+
   const downloadCorrectedDocument = useCallback(async ({
     path,
     suggestedName,
@@ -116,17 +138,25 @@ export default function UploadPage() {
         toast.success('Исправленный файл скачан');
       }
     } catch (downloadError) {
-      if (!silent) {
+      const isNetworkError = !downloadError?.response;
+      if (isNetworkError) {
+        triggerDirectDownload({ path, suggestedName });
+        if (!silent) {
+          toast('Браузеру не удалось получить файл через XHR, пробуем прямое скачивание…');
+        }
+      } else if (!silent) {
         const message = downloadError?.response?.data?.error || 'Не удалось скачать исправленный файл';
         toast.error(message);
       }
-      throw downloadError;
+      if (!isNetworkError) {
+        throw downloadError;
+      }
     } finally {
       if (!skipState) {
         setIsDownloading(false);
       }
     }
-  }, []);
+  }, [triggerDirectDownload]);
 
   const handleUpload = useCallback(async (acceptedFiles) => {
     if (!acceptedFiles?.length) return;

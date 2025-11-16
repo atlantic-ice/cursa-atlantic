@@ -49,6 +49,13 @@ python run.py
 - Исправление документа: POST /api/document/correct
 - Скачивание исправленного документа: GET /api/document/download-corrected
 
+## Настройка ИИ (опционально)
+Функции подсказок Gemini по умолчанию **выключены**. Чтобы их активировать:
+1. Задайте переменную окружения `ENABLE_AI_FEATURES=true` (или `yes/1`).
+2. Укажите `GEMINI_API_KEY` в `.env` через API-ключ Google Gemini.
+
+Без этой переменной сервер игнорирует ИИ и не делает внешние запросы, что избавляет от предупреждений при отсутствии ключа или недоступности моделей.
+
 ## Запуск тестов
 - Модульные тесты: `run_unit_tests.bat` (Windows) или `run_unit_tests.sh` (Linux)
 - Интеграционные тесты: `run_integration_tests.bat` (Windows) или `run_integration_tests.sh` (Linux)
