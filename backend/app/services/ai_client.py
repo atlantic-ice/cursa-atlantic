@@ -11,6 +11,11 @@ from typing import Any, Dict, Optional
 from .ai_config import _get_env_path, _load_env, ENV_KEY
 
 
+def _feature_flag_enabled() -> bool:
+    raw = os.getenv('ENABLE_AI_FEATURES') or os.getenv('AI_FEATURES_ENABLED') or ''
+    return raw.strip().lower() in {'1', 'true', 'yes', 'on'}
+
+
 def _get_api_key() -> Optional[str]:
     # Prefer environment variable already loaded via dotenv; fall back to .env read
     key = os.environ.get(ENV_KEY)
@@ -22,7 +27,7 @@ def _get_api_key() -> Optional[str]:
 
 
 def is_configured() -> bool:
-    return bool(_get_api_key())
+    return _feature_flag_enabled() and bool(_get_api_key())
 
 
 def _ensure_sdk():

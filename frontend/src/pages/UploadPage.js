@@ -34,10 +34,104 @@ export default function UploadPage() {
   const [fileName, setFileName] = useState('');
   const [status, setStatus] = useState('idle');
   const [error, setError] = useState('');
+  const [reportData, setReportData] = useState(null);
+  const [correctedReportData, setCorrectedReportData] = useState(null);
+  const [correctedFilePath, setCorrectedFilePath] = useState('');
+  const [correctionSuccess, setCorrectionSuccess] = useState(false);
+  const [isDownloading, setIsDownloading] = useState(false);
+
+  const resetResults = useCallback(() => {
+    setReportData(null);
+    setCorrectedReportData(null);
+    setCorrectedFilePath('');
+    setCorrectionSuccess(false);
+  }, []);
+
+  const downloadCorrectedDocument = useCallback(async ({
+    path,
+    suggestedName,
+    silent = false,
+    skipState = false,
+  } = {}) => {
+    if (!path) {
+      if (!silent) {
+        toast.error('Сервер не вернул путь к исправленному файлу');
+      }
+      return;
+    }
+
+    if (!skipState) {
+      setIsDownloading(true);
+    }
+
+    try {
+      const response = await axios.get(`${API_BASE}/api/document/download-corrected`, {
+        params: {
+          path,
+          filename: suggestedName,
+        },
+        responseType: 'blob',
+        timeout: 60000,
+      });
+
+      const blob = new Blob([response.data], {
+        type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      });
+
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      const disposition = response.headers?.['content-disposition'];
+      let downloadName = suggestedName;
+
+      if (disposition) {
+        const utf8Match = /filename\*=UTF-8''([^;]+)/i.exec(disposition);
+        const asciiMatch = /filename="?([^";]+)"?/i.exec(disposition);
+        const rawName = (utf8Match && utf8Match[1]) || (asciiMatch && asciiMatch[1]);
+        if (rawName) {
+          try {
+            downloadName = decodeURIComponent(rawName);
+          } catch (decodeError) {
+            downloadName = rawName;
+          }
+        }
+      }
+
+      if (!downloadName) {
+        const parts = path.split(/[\\/]/);
+        downloadName = parts[parts.length - 1];
+      }
+
+      if (downloadName && !/\.docx$/i.test(downloadName)) {
+        downloadName = `${downloadName}.docx`;
+      }
+
+      link.href = url;
+      link.setAttribute('download', downloadName || 'document.docx');
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+
+      if (!silent) {
+        toast.success('Исправленный файл скачан');
+      }
+    } catch (downloadError) {
+      if (!silent) {
+        const message = downloadError?.response?.data?.error || 'Не удалось скачать исправленный файл';
+        toast.error(message);
+      }
+      throw downloadError;
+    } finally {
+      if (!skipState) {
+        setIsDownloading(false);
+      }
+    }
+  }, []);
 
   const handleUpload = useCallback(async (acceptedFiles) => {
     if (!acceptedFiles?.length) return;
     const file = acceptedFiles[0];
+    resetResults();
     setFileName(file.name);
     setStatus('loading');
     setError('');
@@ -46,19 +140,45 @@ export default function UploadPage() {
     formData.append('file', file);
 
     try {
-      await axios.post(`${API_BASE}/api/document/upload`, formData, {
+      const response = await axios.post(`${API_BASE}/api/document/upload`, formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
         timeout: 60000,
       });
+      const data = response?.data;
+
+      if (!data || data.success !== true) {
+        const message = data?.error || 'Не удалось обработать файл';
+        throw new Error(message);
+      }
+
+      setReportData(data.check_results || null);
+      setCorrectedReportData(data.corrected_check_results || null);
+      setCorrectionSuccess(Boolean(data.correction_success));
+      const correctedPath = data.corrected_file_path || data.corrected_path || '';
+      setCorrectedFilePath(correctedPath);
+
       setStatus('success');
-      toast.success(`Файл «${file.name}» отправлен на проверку`);
+      toast.success(`Файл «${file.name}» проверен`);
+
+      if (data.correction_success && correctedPath) {
+        const baseName = (file.name || 'document').replace(/\.docx$/i, '') || 'document';
+        const suggestedName = `${baseName}_corrected.docx`;
+        downloadCorrectedDocument({
+          path: correctedPath,
+          suggestedName,
+          silent: true,
+          skipState: true,
+        }).catch(() => {
+          toast.error('Не удалось автоматически скачать исправленный файл. Используйте кнопку ниже.');
+        });
+      }
     } catch (err) {
-      const message = err?.response?.data?.error || 'Не удалось загрузить файл. Попробуйте ещё раз.';
+      const message = err?.response?.data?.error || err?.message || 'Не удалось загрузить файл. Попробуйте ещё раз.';
       setStatus('error');
       setError(message);
       toast.error(message);
     }
-  }, []);
+  }, [downloadCorrectedDocument, resetResults]);
 
   const handleRejected = useCallback(() => {
     setStatus('error');
@@ -96,18 +216,98 @@ export default function UploadPage() {
     }
   }, [open, status]);
 
+  const totalIssues = reportData?.total_issues_count ?? 0;
+  const correctedIssues = typeof correctedReportData?.total_issues_count === 'number'
+    ? correctedReportData.total_issues_count
+    : null;
+  const improvementCount = typeof correctedIssues === 'number'
+    ? Math.max(totalIssues - correctedIssues, 0)
+    : null;
+  const autoFixableCount = reportData?.statistics?.auto_fixable_count ?? 0;
+  const severityStats = {
+    high: reportData?.statistics?.severity?.high || 0,
+    medium: reportData?.statistics?.severity?.medium || 0,
+    low: reportData?.statistics?.severity?.low || 0,
+  };
+
+  const issuesPreview = useMemo(() => {
+    const source = correctedReportData?.issues?.length
+      ? correctedReportData.issues
+      : reportData?.issues;
+    if (!Array.isArray(source)) {
+      return [];
+    }
+    return source.slice(0, 6);
+  }, [reportData, correctedReportData]);
+
+  const reportSummary = useMemo(() => {
+    if (!reportData) return '';
+    if (typeof correctedIssues === 'number') {
+      if (correctedIssues === 0) {
+        return 'Все несоответствия устранены автоматически. Можно скачать итоговую версию.';
+      }
+      if (improvementCount > 0) {
+        return `Автоисправление устранило ${improvementCount} из ${totalIssues} несоответствий. Ниже список оставшихся пунктов.`;
+      }
+      return 'Автоисправление выполнено, но требуются ручные правки для полного соответствия.';
+    }
+    if (totalIssues === 0) {
+      return 'Несоответствия не обнаружены.';
+    }
+    return 'Ниже список ключевых несоответствий, требующих внимания.';
+  }, [reportData, correctedIssues, improvementCount, totalIssues]);
+
+  const canDownload = correctionSuccess && Boolean(correctedFilePath);
+  const downloadButtonLabel = isDownloading
+    ? 'Скачивание…'
+    : canDownload
+      ? 'Скачать исправленный DOCX'
+      : 'Исправленный файл недоступен';
+  const severityLabelMap = {
+    high: 'Критическая',
+    medium: 'Средняя',
+    low: 'Незначительная',
+  };
+  const showReport = Boolean(reportData);
+
+  const handleDownloadClick = useCallback(() => {
+    if (!correctionSuccess || !correctedFilePath) {
+      toast.error('Исправленный файл ещё не готов');
+      return;
+    }
+
+    const baseName = (fileName || correctedFilePath || 'document').replace(/\.docx$/i, '') || 'document';
+    const suggestedName = `${baseName}_corrected.docx`;
+    downloadCorrectedDocument({ path: correctedFilePath, suggestedName }).catch(() => {});
+  }, [correctionSuccess, correctedFilePath, fileName, downloadCorrectedDocument]);
+
   const statusText = useMemo(() => {
     if (status === 'loading') {
       return 'Загрузка файла…';
     }
     if (status === 'success') {
+      if (reportData) {
+        if (typeof correctedIssues === 'number') {
+          if (correctedIssues === 0) {
+            return `Файл «${fileName}» проверен: все несоответствия устранены автоматически.`;
+          }
+          if (improvementCount > 0) {
+            return `Файл «${fileName}» проверен: исправлено ${improvementCount} из ${totalIssues} несоответствий.`;
+          }
+          return `Файл «${fileName}» проверен: осталось ${correctedIssues} несоответствий.`;
+        }
+        if (totalIssues === 0) {
+          return `Файл «${fileName}» проверен: несоответствий не найдено.`;
+        }
+        return `Файл «${fileName}» проверен: найдено ${totalIssues} несоответствий.`;
+      }
       return fileName ? `Файл «${fileName}» успешно загружен` : 'Файл загружен';
     }
     if (status === 'error') {
       return error;
     }
     return '';
-  }, [status, fileName, error]);
+  }, [status, fileName, error, reportData, correctedIssues, improvementCount, totalIssues]);
 
   const statusClass = status === 'error'
     ? 'upload-status upload-status--error'
@@ -183,14 +383,95 @@ export default function UploadPage() {
               </div>
 
               <div className="upload-text-center">
-                <h2 className="upload-section-title">Что ожидать?</h2>
-                <p className="upload-info">
-                  После загрузки и анализа документа здесь появится отчет об ошибках и возможность
-                  скачать исправленную версию файла.
-                </p>
-                <button className="upload-disabled-button" type="button" disabled>
-                  Скачать исправленный DOCX
-                </button>
+                {showReport ? (
+                  <div className="upload-report glass-card">
+                    <div className="upload-report__header">
+                      <h2 className="upload-section-title">Результаты проверки</h2>
+                      {!!reportSummary && <p className="upload-info">{reportSummary}</p>}
+                    </div>
+
+                    <div className="upload-report__stats">
+                      {[
+                        { label: 'Всего несоответствий', value: totalIssues },
+                        { label: 'Критические', value: severityStats.high },
+                        { label: 'Средние', value: severityStats.medium },
+                        { label: 'Незначительные', value: severityStats.low },
+                        { label: 'Автоисправимых', value: autoFixableCount },
+                        typeof correctedIssues === 'number'
+                          ? { label: 'После автоисправления', value: correctedIssues }
+                          : null,
+                      ]
+                        .filter(Boolean)
+                        .map((stat) => (
+                          <div key={stat.label} className="upload-report__stat-card">
+                            <p className="upload-report__stat-label">{stat.label}</p>
+                            <p className="upload-report__stat-value">{stat.value ?? '—'}</p>
+                          </div>
+                        ))}
+                    </div>
+
+                    {issuesPreview.length > 0 ? (
+                      <div className="upload-report__issues">
+                        <p className="upload-report__issues-title">
+                          {correctedIssues !== null
+                            ? 'Что осталось исправить вручную'
+                            : 'Что нужно поправить вручную'}
+                        </p>
+                        <div className="upload-report__issues-list">
+                          {issuesPreview.map((issue, index) => (
+                            <div key={`${issue.type || 'issue'}-${index}`} className="issue-card">
+                              <span className={`issue-card__badge issue-card__badge--${issue.severity || 'low'}`}>
+                                {severityLabelMap[issue.severity] || 'Замечание'}
+                              </span>
+                              <div className="issue-card__content">
+                                <p className="issue-card__description">
+                                  {issue.description || 'Описание недоступно'}
+                                </p>
+                                {issue.location && (
+                                  <p className="issue-card__location">{issue.location}</p>
+                                )}
+                                {issue.auto_fixable && (
+                                  <p className="issue-card__hint">Можно исправить автоматически</p>
+                                )}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ) : (
+                      <p className="upload-info upload-report__no-issues">
+                        Все найденные несоответствия были устранены автоматически.
+                      </p>
+                    )}
+
+                    <div className="upload-report__actions">
+                      <button
+                        type="button"
+                        className="upload-button upload-button--secondary"
+                        onClick={handleDownloadClick}
+                        disabled={!canDownload || isDownloading}
+                      >
+                        {downloadButtonLabel}
+                      </button>
+                    </div>
+                    {canDownload && (
+                      <p className="download-hint">
+                        Если загрузка не началась автоматически, нажмите кнопку выше.
+                      </p>
+                    )}
+                  </div>
+                ) : (
+                  <>
+                    <h2 className="upload-section-title">Что ожидать?</h2>
+                    <p className="upload-info">
+                      После загрузки и анализа документа здесь появится отчет об ошибках и возможность
+                      скачать исправленную версию файла.
+                    </p>
+                    <button className="upload-disabled-button" type="button" disabled>
+                      Скачивание станет доступно после проверки
+                    </button>
+                  </>
+                )}
               </div>
             </div>
           </main>
