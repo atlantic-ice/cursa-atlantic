@@ -56,6 +56,11 @@ python run.py
 
 Без этой переменной сервер игнорирует ИИ и не делает внешние запросы, что избавляет от предупреждений при отсутствии ключа или недоступности моделей.
 
+## CORS и фронтенд-домены
+- По умолчанию backend разрешает локальные адреса и `https://cursa-atlantic.vercel.app`.
+- Все превью Vercel вида `https://cursa-atlantic-*.vercel.app` и `https://cursa-atlantic-*-atlantic-ices-projects.vercel.app` теперь автоматически совпадают по регулярному выражению, поэтому загрузка/скачивание работает на любом deploy.
+- Для дополнительных доменов добавьте переменную `FRONTEND_ORIGINS` (через запятую), например `FRONTEND_ORIGINS=https://demo.example.com,https://stage.example.com` и перезапустите сервис.
+
 ## Запуск тестов
 - Модульные тесты: `run_unit_tests.bat` (Windows) или `run_unit_tests.sh` (Linux)
 - Интеграционные тесты: `run_integration_tests.bat` (Windows) или `run_integration_tests.sh` (Linux)

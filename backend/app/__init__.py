@@ -1,6 +1,7 @@
 from flask import Flask, send_from_directory
 from flask_cors import CORS
 import os
+import re
 from dotenv import load_dotenv
 import logging
 from logging.handlers import RotatingFileHandler
@@ -27,6 +28,10 @@ def create_app():
         'http://localhost:5000',
         'https://cursa-atlantic.vercel.app',
     }
+    allowed_origin_patterns = [
+        re.compile(r'https://cursa-atlantic(?:-[a-z0-9\-]+)?\.vercel\.app', re.IGNORECASE),
+        re.compile(r'https://cursa-atlantic-[a-z0-9\-]+-atlantic-ices-projects\.vercel\.app', re.IGNORECASE),
+    ]
     extra_origins = os.getenv('FRONTEND_ORIGINS', os.getenv('FRONTEND_ORIGIN', ''))
     if extra_origins:
         allowed_origins.update({origin.strip() for origin in extra_origins.split(',') if origin.strip()})
@@ -34,7 +39,7 @@ def create_app():
     # Настройка CORS с правильными параметрами
     CORS(
         app,
-        origins=list(allowed_origins),
+        origins=list(allowed_origins) + allowed_origin_patterns,
         methods=['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
         allow_headers=['Content-Type', 'Authorization'],
         supports_credentials=True,

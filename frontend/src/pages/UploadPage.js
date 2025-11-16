@@ -7,7 +7,28 @@ import '@fontsource/inter/700.css';
 import '@fontsource/inter/900.css';
 import './UploadPage.css';
 
-const API_BASE = (process.env.REACT_APP_API_BASE || 'https://cursa.onrender.com').replace(/\/$/, '');
+const PROD_API_BASE = 'https://cursa.onrender.com';
+const LOCAL_API_BASE = process.env.REACT_APP_LOCAL_API_BASE || 'http://127.0.0.1:5000';
+
+const sanitizeBase = (value) => (value || '').replace(/\/$/, '');
+
+const API_BASE = (() => {
+  const envBase = process.env.REACT_APP_API_BASE;
+  if (envBase) {
+    return sanitizeBase(envBase);
+  }
+
+  if (typeof window !== 'undefined') {
+    const hostname = window.location.hostname || '';
+    const isLocalhost = ['localhost', '127.0.0.1', '::1'].includes(hostname);
+    const isDevTLD = hostname.endsWith('.local');
+    if (isLocalhost || isDevTLD) {
+      return sanitizeBase(LOCAL_API_BASE);
+    }
+  }
+
+  return sanitizeBase(PROD_API_BASE);
+})();
 
 const UploadIcon = () => (
   <svg
