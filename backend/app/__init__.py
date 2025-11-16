@@ -20,13 +20,25 @@ def create_app():
         pass
 
     app = Flask(__name__)
-    
+
+    allowed_origins = {
+        'http://localhost:3000',
+        'http://127.0.0.1:3000',
+        'http://localhost:5000',
+        'https://cursa-atlantic.vercel.app',
+    }
+    extra_origins = os.getenv('FRONTEND_ORIGINS', os.getenv('FRONTEND_ORIGIN', ''))
+    if extra_origins:
+        allowed_origins.update({origin.strip() for origin in extra_origins.split(',') if origin.strip()})
+
     # Настройка CORS с правильными параметрами
-    CORS(app, 
-         origins=['http://localhost:3000', 'http://127.0.0.1:3000', 'http://localhost:5000'],
-         methods=['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-         allow_headers=['Content-Type', 'Authorization'],
-         supports_credentials=True)
+    CORS(
+        app,
+        origins=list(allowed_origins),
+        methods=['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+        allow_headers=['Content-Type', 'Authorization'],
+        supports_credentials=True,
+    )
     
     # Настройка логгирования
     setup_logging(app)
